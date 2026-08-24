@@ -15,12 +15,20 @@ LABEL org.label-schema.build-date=$BUILD_DATE \
       org.label-schema.version=$VERSION \
       org.label-schema.schema-version="1.0.0"
 
+# Default timezone for the UNM deployment
+ENV TZ=America/Denver
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone
+
 # Install a few dependencies for iCommands, text editing, and monitoring instances
+# gettext-base provides envsubst, used at container start to fill in the
+# runtime iRODS config with the real $IPLANT_USER
 RUN apt update && apt install -y apt-transport-https \
     apt-utils \
     ca-certificates \
     curl \
     gcc \
+    gettext-base \
     glances \
     gnupg2 \
     htop \
@@ -107,6 +115,24 @@ ENV PATH="/home/rstudio/.npm-global/bin:/home/rstudio/.opencode/bin:${PATH}"
 USER root
 
 WORKDIR /home/rstudio/data-store
-    
+
+# irods_environment.json itself is written at container start by run.sh, not
+# here: $IPLANT_USER doesn't exist at build time, so baking it in now would
+# always envsubst it to an empty string.
+RUN mkdir -p /home/rstudio/.irods
+
+# ~/scratch for temporary storage that isn't backed by the data store
+RUN mkdir -p /home/rstudio/scratch
+
+# Everything under $HOME needs to be owned by rstudio before run.sh writes to
+# it (e.g. the runtime iRODS config), so do it once, here, after every other
+# build step that touches $HOME
+RUN chown -R rstudio:rstudio /home/rstudio
+
+# Default working directory is the home directory. The data-store WORKDIR
+# above only needs to exist for the CSI driver's mount path (set separately
+# in the DE/K8s config), not to be where the session actually lands.
+WORKDIR /home/rstudio
+
 ENTRYPOINT ["/usr/local/bin/run.sh"]
 
